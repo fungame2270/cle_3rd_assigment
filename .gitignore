@@ -4,3 +4,8 @@
 *.ptx
 *.cubin
 *.fatbin
+
+canny
+out*
+reference*
+.vscode
