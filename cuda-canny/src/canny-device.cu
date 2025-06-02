@@ -37,27 +37,35 @@ __global__ void convolutionKernel(const pixel_t *in, pixel_t *out, const float *
     out[n * width + m] = pixel;
 }
 
-void min_max_host(const pixel_t *in, const int width, const int height, pixel_t *min, pixel_t *max)
+__global__ void min_max_device(const pixel_t *in, const int width, const int height, pixel_t *min, pixel_t *max)
 {
-    *min = *max = in[0];
-    for (int i = 1; i < width * height; i++) {
-        if (in[i] < *min) *min = in[i];
-        if (in[i] > *max) *max = in[i];
-    }
+    int m = blockIdx.x * blockDim.x + threadIdx.x;
+    int n = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (m >= width || n >= height) return;
+
+    int idx = n * width + m;
+    pixel_t val = in[idx];
+
+    atomicMin(min, val);
+    atomicMax(max, val);
 }
 
-void normalize_host(  pixel_t *inout,
-               const int nx, const int ny, const int kn,
-               const int min, const int max)
-{
-    const int khalf = kn / 2;
+__global__ void normalize_device(pixel_t *d_inout, int nx, int ny, int kn, const int *d_min, const int *d_max) {
+    int m = blockIdx.x * blockDim.x + threadIdx.x;
+    int n = blockIdx.y * blockDim.y + threadIdx.y;
 
-    for (int m = khalf; m < nx - khalf; m++)
-        for (int n = khalf; n < ny - khalf; n++) {
+    int khalf = kn / 2;
 
-            pixel_t pixel = MAX_BRIGHTNESS * ((int)inout[n * nx + m] -(float) min) / ((float)max - (float)min);
-            inout[n * nx + m] = pixel;
-        }
+    if (m >= khalf && m < nx - khalf && n >= khalf && n < ny - khalf) {
+        int idx = n * nx + m;
+
+        int min_val = *d_min;
+        int max_val = *d_max;
+
+        float normalized = MAX_BRIGHTNESS * ((float)d_inout[idx] - (float)min_val) / ((float)(max_val - min_val));
+        d_inout[idx] = (pixel_t)normalized;
+    }
 }
 
 void gaussian_filter_device(const pixel_t *in, pixel_t *out,
@@ -84,18 +92,17 @@ void gaussian_filter_device(const pixel_t *in, pixel_t *out,
     dim3 block_size(16, 16);
     dim3 grid_size((width + 15) / 16, (height + 15) / 16);
     convolutionKernel<<<grid_size, block_size>>>(in, out, d_kernel, width, height, kernel_size);
-    
-    // run min max and normalize on host
-    pixel_t *h_out = new pixel_t[width * height];
-    cudaMemcpy(h_out, out, sizeof(pixel_t) * width * height, cudaMemcpyDeviceToHost);
 
-    pixel_t min, max;
-    min_max_host(h_out, width, height, &min, &max);
-    normalize_host(h_out, width, height, kernel_size, min, max);
+    pixel_t *min, *max;
+    cudaMalloc(&min, sizeof(pixel_t));
+    cudaMalloc(&max, sizeof(pixel_t));
+
+    min_max_device<<<grid_size, block_size>>>(out, width, height, min, max);
+    normalize_device<<<grid_size, block_size>>>(out, width, height, kernel_size, min, max);
     
-    cudaMemcpy(out, h_out, sizeof(pixel_t) * width * height, cudaMemcpyHostToDevice);
-    delete[] h_out;
     cudaFree(d_kernel);
+    cudaFree(min);
+    cudaFree(max);
 }
 
 __global__ void mergeGradientsKernel(const pixel_t *gx, const pixel_t *gy, pixel_t *out, int size)
@@ -221,17 +228,9 @@ void cannyDevice( const int *h_idata,
     int threads = 256;
     int blocks = (size + threads - 1) / threads;
     mergeGradientsKernel<<<blocks, threads>>>(d_gradient_x, d_gradient_y, d_odata, size);
-
-    cudaDeviceSynchronize();
-
     non_maximum_suppressionKernel<<<grid_size, block_size>>>(d_gradient_x, d_gradient_y, d_odata, d_nms, width, height);
-    
-    cudaDeviceSynchronize();
-
     first_edgesKernel<<<grid_size, block_size>>>(d_nms, d_odata, width, height, tmax);
     
-    cudaDeviceSynchronize();
-
     bool h_changed;
     bool *d_changed;
     cudaMalloc(&d_changed, sizeof(bool));
