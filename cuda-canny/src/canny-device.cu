@@ -10,15 +10,13 @@ typedef int pixel_t;
 
 #define MAX_BRIGHTNESS 255
 
-__global__ void convolutionKernel(const pixel_t *in, pixel_t *out, const float *kernel,
-                                  const int width, const int height, const int kernelSize)
+__global__ void convolutionKernel(const pixel_t *in, pixel_t *out, const float *kernel, const int width, const int height, const int kernelSize)
 {
     int m = blockIdx.x * blockDim.x + threadIdx.x;
     int n = blockIdx.y * blockDim.y + threadIdx.y;
-
     const int kernelHalfSize = kernelSize / 2;
 
-    // Only compute for valid output pixels (inside border)
+    // check if pixel valid
     if (m < kernelHalfSize || m >= width - kernelHalfSize || n < kernelHalfSize || n >= height - kernelHalfSize)
         return;
 
@@ -27,44 +25,42 @@ __global__ void convolutionKernel(const pixel_t *in, pixel_t *out, const float *
 
     for (int j = -kernelHalfSize; j <= kernelHalfSize; j++) {
         for (int i = -kernelHalfSize; i <= kernelHalfSize; i++) {
-            int xi = m - i;
-            int yj = n - j;
-            pixel += in[yj * width + xi] * kernel[index];
+            pixel += in[(n - j) * width + m-i] * kernel[index];
             index++;
         }
     }
-
+    
     out[n * width + m] = pixel;
 }
 
 __global__ void min_max_device(const pixel_t *in, const int width, const int height, pixel_t *min, pixel_t *max)
 {
-    int m = blockIdx.x * blockDim.x + threadIdx.x;
-    int n = blockIdx.y * blockDim.y + threadIdx.y;
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-    if (m >= width || n >= height) return;
+    if (x >= width || y >= height) return;
 
-    int idx = n * width + m;
-    pixel_t val = in[idx];
+    int index = y * width + x;
+    pixel_t pixel = in[index];
 
-    atomicMin(min, val);
-    atomicMax(max, val);
+    atomicMin(min, pixel);
+    atomicMax(max, pixel);
 }
 
-__global__ void normalize_device(pixel_t *d_inout, int nx, int ny, int kn, const int *d_min, const int *d_max) {
-    int m = blockIdx.x * blockDim.x + threadIdx.x;
-    int n = blockIdx.y * blockDim.y + threadIdx.y;
+__global__ void normalize_device(pixel_t *d_inout, int nx, int ny, int kernel, const int *d_min, const int *d_max) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x; //m
+    int y = blockIdx.y * blockDim.y + threadIdx.y; //n
 
-    int khalf = kn / 2;
+    int kernelHalfSize = kernel / 2;
 
-    if (m >= khalf && m < nx - khalf && n >= khalf && n < ny - khalf) {
-        int idx = n * nx + m;
+    if (x >= kernelHalfSize && x < nx - kernelHalfSize && y >= kernelHalfSize && y < ny - kernelHalfSize) {
+        int index = y * nx + x;
 
         int min_val = *d_min;
         int max_val = *d_max;
 
-        float normalized = MAX_BRIGHTNESS * ((float)d_inout[idx] - (float)min_val) / ((float)(max_val - min_val));
-        d_inout[idx] = (pixel_t)normalized;
+        float normalized = MAX_BRIGHTNESS * ((float)d_inout[index] - (float)min_val) / ((float)(max_val - min_val));
+        d_inout[index] = (pixel_t)normalized;
     }
 }
 
@@ -79,9 +75,7 @@ void gaussian_filter_device(const pixel_t *in, pixel_t *out,
     size_t index = 0;
     for (int i = 0; i < kernel_size; i++)
         for (int j = 0; j < kernel_size; j++) {
-            h_kernel[index] = exp(-0.5 * (pow((i - mean) / sigma, 2.0) +
-                            pow((j - mean) / sigma, 2.0)))
-                / (2 * M_PI * sigma * sigma);
+            h_kernel[index] = exp(-0.5 * (pow((i - mean) / sigma, 2.0) + pow((j - mean) / sigma, 2.0))) / (2 * M_PI * sigma * sigma);
             index++;
         }
 
@@ -93,16 +87,16 @@ void gaussian_filter_device(const pixel_t *in, pixel_t *out,
     dim3 grid_size((width + 15) / 16, (height + 15) / 16);
     convolutionKernel<<<grid_size, block_size>>>(in, out, d_kernel, width, height, kernel_size);
 
-    pixel_t *min, *max;
-    cudaMalloc(&min, sizeof(pixel_t));
-    cudaMalloc(&max, sizeof(pixel_t));
+    pixel_t *d_min, *d_max;
+    cudaMalloc(&d_min, sizeof(pixel_t));
+    cudaMalloc(&d_max, sizeof(pixel_t));
 
-    min_max_device<<<grid_size, block_size>>>(out, width, height, min, max);
-    normalize_device<<<grid_size, block_size>>>(out, width, height, kernel_size, min, max);
+    min_max_device<<<grid_size, block_size>>>(out, width, height, d_min, d_max);
+    normalize_device<<<grid_size, block_size>>>(out, width, height, kernel_size, d_min, d_max);
     
     cudaFree(d_kernel);
-    cudaFree(min);
-    cudaFree(max);
+    cudaFree(d_min);
+    cudaFree(d_max);
 }
 
 __global__ void mergeGradientsKernel(const pixel_t *gx, const pixel_t *gy, pixel_t *out, int size)
@@ -118,47 +112,40 @@ __global__ void non_maximum_suppressionKernel(const pixel_t *d_gradientX, const 
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
-
+    
     if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) return;
 
     int index = y * width + x;
 
-    float angle = atan2f(d_gradientY[index], d_gradientX[index]);
-    // Normalize angle to [0, PI)
-    angle = fmodf(angle + M_PI, M_PI);
+    const int nn = index - width;
+    const int ss = index + width;
+    const int ww = index + 1;
+    const int ee = index - 1;
+    const int nw = nn + 1;
+    const int ne = nn - 1;
+    const int sw = ss + 1;
+    const int se = ss - 1;
 
-    // Convert angle to 8 sectors (0 to 7)
-    int dir = (int)(angle / M_PI * 8) % 8;
-
-    bool keep = false;
-    switch (dir) {
-        case 0: // 0 degrees (horizontal)
-        case 7:
-            keep = (gradientMag[index] > gradientMag[index - 1] && gradientMag[index] > gradientMag[index + 1]);
-            break;
-        case 1: // 45 degrees
-        case 2:
-            keep = (gradientMag[index] > gradientMag[index - width + 1] && gradientMag[index] > gradientMag[index + width - 1]);
-            break;
-        case 3: // 90 degrees (vertical)
-        case 4:
-            keep = (gradientMag[index] > gradientMag[index - width] && gradientMag[index] > gradientMag[index + width]);
-            break;
-        case 5: // 135 degrees
-        case 6:
-            keep = (gradientMag[index] > gradientMag[index - width - 1] && gradientMag[index] > gradientMag[index + width + 1]);
-            break;
-    }
-
-    nms[index] = keep ? (int)gradientMag[index] : 0;
+    const float dir = (float)(fmod(atan2f(d_gradientY[index],d_gradientX[index]) + M_PI,M_PI) / M_PI) * 8;
+    if (((dir <= 1 || dir > 7) && gradientMag[index] > gradientMag[ee] &&
+                gradientMag[index] > gradientMag[ww]) || // 0 deg
+                ((dir > 1 && dir <= 3) && gradientMag[index] > gradientMag[nw] &&
+                gradientMag[index] > gradientMag[se]) || // 45 deg
+                ((dir > 3 && dir <= 5) && gradientMag[index] > gradientMag[nn] &&
+                gradientMag[index] > gradientMag[ss]) || // 90 deg
+                ((dir > 5 && dir <= 7) && gradientMag[index] > gradientMag[ne] &&
+                gradientMag[index] > gradientMag[sw]))   // 135 deg
+                nms[index] = gradientMag[index];
+            else
+                nms[index] = 0;
 }
 
 
-__global__ void first_edgesKernel(const int *nms, int *edges,
-                                  int width, int height, int tmax)
+__global__ void first_edgesKernel(const int *nms, int *edges, int width, int height, int tmax)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
+    // check position valid
     if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) return;
 
     int index = y * width + x;
@@ -168,8 +155,7 @@ __global__ void first_edgesKernel(const int *nms, int *edges,
         edges[index] = 0;
 }
 
-__global__ void hysteresis_edgesKernel(const int *nms, int *edges,
-                                       int width, int height, int tmin, bool *d_changed)
+__global__ void hysteresis_edgesKernel(const int *nms, int *edges, int width, int height, int tmin, bool *d_changed)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -181,17 +167,13 @@ __global__ void hysteresis_edgesKernel(const int *nms, int *edges,
         // Check 8 neighbors for edge presence
         if (edges[index - width] || edges[index + width] || edges[index - 1] || edges[index + 1] ||
             edges[index - width - 1] || edges[index - width + 1] || edges[index + width - 1] || edges[index + width + 1]) {
-            edges[index] = MAX_BRIGHTNESS;
-            *d_changed = true;
+                edges[index] = MAX_BRIGHTNESS;
+                *d_changed = true;
         }
     }
 }
 
-void cannyDevice( const int *h_idata, 
-                 const int width, const int height,
-                 const int tmin, const int tmax,
-                 const float sigma,
-                 int *h_odata)
+void cannyDevice(const int *h_idata, const int width, const int height, const int tmin, const int tmax, const float sigma, int *h_odata)
 {
     const int size = width * height;
 
