@@ -12,12 +12,12 @@ typedef int pixel_t;
 
 __global__ void convolutionKernel(const pixel_t *in, pixel_t *out, const float *kernel, const int width, const int height, const int kernelSize)
 {
-    int m = blockIdx.x * blockDim.x + threadIdx.x;
-    int n = blockIdx.y * blockDim.y + threadIdx.y;
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
     const int kernelHalfSize = kernelSize / 2;
 
     // check if pixel valid
-    if (m < kernelHalfSize || m >= width - kernelHalfSize || n < kernelHalfSize || n >= height - kernelHalfSize)
+    if (x < kernelHalfSize || x >= width - kernelHalfSize || y < kernelHalfSize || y >= height - kernelHalfSize)
         return;
 
     float pixel = 0.0f;
@@ -25,12 +25,12 @@ __global__ void convolutionKernel(const pixel_t *in, pixel_t *out, const float *
 
     for (int j = -kernelHalfSize; j <= kernelHalfSize; j++) {
         for (int i = -kernelHalfSize; i <= kernelHalfSize; i++) {
-            pixel += in[(n - j) * width + m-i] * kernel[index];
+            pixel += in[(y - j) * width + x - i] * kernel[index];
             index++;
         }
     }
     
-    out[n * width + m] = pixel;
+    out[y * width + x] = pixel;
 }
 
 __global__ void min_max_device(const pixel_t *in, const int width, const int height, pixel_t *min, pixel_t *max)
@@ -48,8 +48,8 @@ __global__ void min_max_device(const pixel_t *in, const int width, const int hei
 }
 
 __global__ void normalize_device(pixel_t *d_inout, int nx, int ny, int kernel, const int *d_min, const int *d_max) {
-    int x = blockIdx.x * blockDim.x + threadIdx.x; //m
-    int y = blockIdx.y * blockDim.y + threadIdx.y; //n
+    int x = blockIdx.x * blockDim.x + threadIdx.x; 
+    int y = blockIdx.y * blockDim.y + threadIdx.y; 
 
     int kernelHalfSize = kernel / 2;
 
