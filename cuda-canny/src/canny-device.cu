@@ -113,6 +113,7 @@ __global__ void non_maximum_suppressionKernel(const pixel_t *d_gradientX, const 
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
     
+    //skipts border
     if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) return;
 
     int index = y * width + x;
