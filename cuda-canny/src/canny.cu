@@ -302,7 +302,7 @@ void cannyHost( const int *h_idata, const int w, const int h,
 // print command line format
 void usage(char *command)
 {
-    printf("Usage: %s [-h] [-d device] [-i inputfile] [-o outputfile] [-r referenceFile] [-s sigma] [-t threshold]\n",command);
+    printf("Usage: %s [-h] [-d device] [-i inputfile] [-o outputfile] [-r referenceFile] [-s sigma] [-t threshold] [-b blockSize]\n",command);
 }
 
 // main
@@ -313,13 +313,20 @@ int main( int argc, char** argv)
     char *fileIn=(char *)"images/lake.pgm",*fileOut=(char *)"out.pgm",*referenceOut=(char *)"reference.pgm";
     int tmin = 45, tmax = 50;
     float sigma=1.0f;
+    int blockSize = 16;
 
     // parse command line arguments
     int opt;
-    while( (opt = getopt(argc,argv,"d:i:o:r:n:x:s:h")) !=-1)
+    while( (opt = getopt(argc,argv,"d:i:o:r:n:x:s:b:h")) !=-1)
     {
         switch(opt)
         {
+            case 'b':  // block size
+                if (strlen(optarg) == 0 || sscanf(optarg, "%d", &blockSize) != 1) {
+                    usage(argv[0]);
+                    exit(1);
+                }
+                break;
 
             case 'd':  // device
                 if(sscanf(optarg,"%d",&deviceId)!=1)
@@ -435,7 +442,7 @@ int main( int argc, char** argv)
 
     // detect edges at GPU
     cudaEventRecord( startD, 0 );
-    cannyDevice(h_idata, w, h, tmin, tmax, sigma, h_odata);
+    cannyDevice(h_idata, w, h, tmin, tmax, sigma, h_odata, blockSize);
     cudaEventRecord( stopD, 0 );
     cudaEventSynchronize( stopD );
 
