@@ -1,0 +1,9 @@
+image_name,host_avg_ms,device_avg_ms
+house.pgm,33.480156,1.200355
+jetplane.pgm,33.064713,1.196780
+lake.pgm,36.779190,1.197017
+livingroom.pgm,33.752584,1.202569
+mandril.pgm,33.991312,1.199619
+peppers_gray.pgm,35.522039,1.203110
+pirate.pgm,35.046115,1.201616
+walkbridge.pgm,33.797926,1.202182

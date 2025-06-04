@@ -24,11 +24,13 @@ The **cannyDevice** function implements the full Canny edge detection pipeline o
 
 ## Results
 
-Average time on host is `~33.735651 ms`
+Average time on host is `33.735651 ms` so all the speedups are compared to this value. We ran all of the tests 10 times and then took the average value.
+
+### Different Block Sizes
 
 The best time is `1.195702 ms` obtained with a block size of `16` and resulting in a `28.203x` speedup compared to the host.  
 
-| Block Size | GPU Avg Time (ms) | Speedup vs CPU (×) |
+| Block Size | GPU Avg Time (ms) | Speedup (CPU / GPU)|
 | ---------- | ----------------- | ------------------ |
 | 1          | 11.183820         | 3.016×             |
 | 2          | 3.721225          | 9.063×             |
@@ -64,3 +66,18 @@ The best time is `1.195702 ms` obtained with a block size of `16` and resulting 
 | 32         | 1.237705          | 27.251×            |
 
 ![graph](gpu_avg_time.png "Graph")
+
+### Different Images
+
+We also ran the program with a block size of 16 for each of the provided images. The speedup is basically the same between the different images.
+
+| Image Name          | GPU Avg Time (ms) | Speedup (CPU / GPU) |
+|---------------------|-------------------|---------------------|
+| house.pgm           | 1.200355          | 28.11x              |
+| jetplane.pgm        | 1.196780          | 28.17x              |
+| lake.pgm            | 1.197017          | 28.17x              |
+| livingroom.pgm      | 1.202569          | 28.05x              |
+| mandril.pgm         | 1.199619          | 28.11x              |
+| peppers_gray.pgm    | 1.203110          | 28.04x              |
+| pirate.pgm          | 1.201616          | 28.07x              |
+| walkbridge.pgm      | 1.202182          | 28.06x              |
